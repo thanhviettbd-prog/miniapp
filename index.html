@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Xem quảng cáo – Nhận lượt tải</title>
+
+  <!-- Telegram Mini App SDK (bắt buộc) -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Monetag SDK được inject server-side bởi ads_server/main.py từ file: -->
+  <!-- miniapp/miniapp-publishers-monetag-com.txt                          -->
+  <!-- KHÔNG sửa tag này tại đây — chỉ sửa file .txt là đủ               -->
+
+  <style>
+    :root {
+      --tg-bg:     var(--tg-theme-bg-color,       #1a1a2e);
+      --tg-text:   var(--tg-theme-text-color,      #ffffff);
+      --tg-hint:   var(--tg-theme-hint-color,      #aaaaaa);
+      --tg-btn:    var(--tg-theme-button-color,    #5865f2);
+      --tg-btn-t:  var(--tg-theme-button-text-color,#ffffff);
+      --accent:    #7c3aed;
+      --success:   #10b981;
+      --danger:    #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--tg-bg);
+      color: var(--tg-text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .card h2 { font-size: 1.25rem; margin-bottom: 6px; }
+    .card .subtitle { color: var(--tg-hint); font-size: 0.875rem; margin-bottom: 24px; }
+
+    /* ── Ad container ── */
+    #ad-container {
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+      margin-bottom: 20px;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    #ad-video {
+      width: 100%;
+      max-height: 300px;
+      display: none;
+    }
+
+    #ad-banner {
+      width: 100%;
+      display: none;
+      cursor: pointer;
+      border-radius: 12px;
+    }
+
+    /* PropellerAds / Adsterra iframe container */
+    #ad-external {
+      width: 100%;
+      min-height: 250px;
+      display: none;
+    }
+
+    .ad-placeholder {
+      color: var(--tg-hint);
+      font-size: 0.8rem;
+      padding: 40px 20px;
+    }
+
+    /* ── Countdown ring ── */
+    .countdown-wrap {
+      position: relative;
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 20px;
+    }
+
+    .countdown-wrap svg { transform: rotate(-90deg); }
+
+    .countdown-wrap circle {
+      fill: none;
+      stroke-width: 5;
+    }
+
+    .countdown-bg   { stroke: rgba(255,255,255,0.1); }
+    .countdown-bar  { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+
+    .countdown-number {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary  { background: var(--tg-btn); color: var(--tg-btn-t); }
+    .btn-success  { background: var(--success); color: #fff; }
+    .btn-outline  { background: transparent; border: 2px solid var(--tg-btn); color: var(--tg-btn); margin-top: 10px; }
+
+    /* ── Status messages ── */
+    #status-msg {
+      font-size: 0.875rem;
+      margin-top: 14px;
+      min-height: 20px;
+      color: var(--tg-hint);
+    }
+    #status-msg.ok     { color: var(--success); }
+    #status-msg.error  { color: var(--danger); }
+
+    /* ── Reward badge ── */
+    .reward-badge {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+
+    /* ── Screens ── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* Loading spinner */
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid rgba(255,255,255,0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 40px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+
+<body>
+
+<!-- ══════════════════════════════════ SCREEN: loading ══════════════════════ -->
+<div id="screen-loading" class="screen active card">
+  <div class="spinner"></div>
+  <p style="color:var(--tg-hint);font-size:0.85rem">Đang tải quảng cáo...</p>
+</div>
+
+<!-- ══════════════════════════════════ SCREEN: watch ════════════════════════ -->
+<div id="screen-watch" class="screen card">
+  <h2>🎬 Xem quảng cáo</h2>
+  <p class="subtitle">Xem hết để nhận +1 lượt tải miễn phí</p>
+
+  <div id="ad-container">
+    <!-- Video ad (internal) -->
+    <video id="ad-video" playsinline muted></video>
+
+    <!-- Banner ad (internal) -->
+    <img id="ad-banner" alt="Quảng cáo" />
+
+    <!-- External ad network (PropellerAds / Adsterra) -->
+    <div id="ad-external"></div>
+
+    <div class="ad-placeholder" id="ad-placeholder">Đang tải quảng cáo...</div>
+  </div>
+
+  <!-- Countdown ring -->
+  <div class="countdown-wrap" id="countdown-wrap" style="display:none">
+    <svg viewBox="0 0 80 80" width="80" height="80">
+      <circle class="countdown-bg" cx="40" cy="40" r="35"/>
+      <circle class="countdown-bar" id="countdown-bar" cx="40" cy="40" r="35"
+              stroke-dasharray="219.9" stroke-dashoffset="0"/>
+    </svg>
+    <div class="countdown-number" id="countdown-number">10</div>
+  </div>
+
+  <button class="btn btn-success" id="btn-claim" disabled>
+    ✅ Nhận +1 lượt tải
+  </button>
+
+  <button class="btn btn-outline" id="btn-skip" onclick="Telegram.WebApp.close()">
+    Bỏ qua
+  </button>
+
+  <div id="status-msg"></div>
+</div>
+
+<!-- ══════════════════════════════════ SCREEN: success ══════════════════════ -->
+<div id="screen-success" class="screen card">
+  <div class="reward-badge">🎉</div>
+  <h2>Bạn đã nhận được +1 lượt tải!</h2>
+  <p class="subtitle" id="success-count"></p>
+  <button class="btn btn-primary" style="margin-top:24px"
+          onclick="Telegram.WebApp.close()">
+    Quay lại bot
+  </button>
+</div>
+
+<!-- ══════════════════════════════════ SCREEN: error ═══════════════════════ -->
+<div id="screen-error" class="screen card">
+  <div class="reward-badge">⚠️</div>
+  <h2 id="error-title">Có lỗi xảy ra</h2>
+  <p class="subtitle" id="error-msg"></p>
+  <button class="btn btn-outline" style="margin-top:24px"
+          onclick="Telegram.WebApp.close()">
+    Đóng
+  </button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     MAIN SCRIPT
+═══════════════════════════════════════════════════════════════════════════ -->
+<script>
+"use strict";
+
+// ─── Config (inject khi deploy) ───────────────────────────────────────────
+const ADS_API_BASE = "%%ADS_API_BASE%%";   // e.g. https://ads.yourdomain.com
+const AD_WATCH_SECONDS = 10;               // giây phải xem tối thiểu
+
+// ─── Telegram WebApp init ────────────────────────────────────────────────
+const tg       = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+const initData = tg.initData;
+const user     = tg.initDataUnsafe?.user || {};
+const userId   = user.id || 0;
+
+// bot_id được truyền qua startapp parameter
+const startParam = tg.initDataUnsafe?.start_param || "";
+const botId      = parseInt(startParam.replace("bot_", "")) || 0;
+
+// ─── State ───────────────────────────────────────────────────────────────
+let currentAdId     = null;
+let countdownTimer  = null;
+let watchedSeconds  = 0;
+
+// ─── UI helpers ──────────────────────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+function setStatus(msg, type = "") {
+  const el = document.getElementById("status-msg");
+  el.textContent = msg;
+  el.className   = type;
+}
+
+// ─── Countdown ring ──────────────────────────────────────────────────────
+const CIRCUM = 2 * Math.PI * 35;  // ≈ 219.9
+
+function startCountdown(totalSeconds) {
+  const bar       = document.getElementById("countdown-bar");
+  const numEl     = document.getElementById("countdown-number");
+  const wrap      = document.getElementById("countdown-wrap");
+  const claimBtn  = document.getElementById("btn-claim");
+
+  wrap.style.display = "";
+  let remaining = totalSeconds;
+  numEl.textContent = remaining;
+  bar.style.strokeDashoffset = 0;
+
+  countdownTimer = setInterval(() => {
+    remaining--;
+    watchedSeconds++;
+    numEl.textContent = remaining;
+    bar.style.strokeDashoffset = CIRCUM * (1 - remaining / totalSeconds);
+
+    if (remaining <= 0) {
+      clearInterval(countdownTimer);
+      claimBtn.disabled = false;
+      setStatus("Nhấn nút bên dưới để nhận lượt tải!", "ok");
+    }
+  }, 1000);
+}
+
+// ─── Load ad ─────────────────────────────────────────────────────────────
+async function loadAd() {
+  try {
+    const url = `${ADS_API_BASE}/get_ad?user_id=${userId}&bot_id=${botId}&init_data=${encodeURIComponent(initData)}`;
+    const res  = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    showScreen("screen-watch");
+
+    if (data.source === "internal" && data.ad) {
+      renderInternalAd(data.ad);
+    } else {
+      renderExternalAd(data.network || "propellerads");
+    }
+
+    // Start countdown regardless of ad type
+    startCountdown(AD_WATCH_SECONDS);
+
+  } catch (err) {
+    showError("Không thể tải quảng cáo", err.message);
+  }
+}
+
+// ─── Render: internal ad ─────────────────────────────────────────────────
+function renderInternalAd(ad) {
+  document.getElementById("ad-placeholder").style.display = "none";
+  currentAdId = ad.id;
+
+  if (ad.type === "video" && ad.media_url) {
+    const vid = document.getElementById("ad-video");
+    vid.src   = ad.media_url;
+    vid.style.display = "block";
+    vid.play().catch(() => {});             // autoplay (muted)
+    vid.addEventListener("ended", () => {
+      // Video ended = tính đủ view time
+    });
+
+  } else if (ad.media_url) {
+    const img = document.getElementById("ad-banner");
+    img.src   = ad.media_url;
+    img.style.display = "block";
+    if (ad.target_url) {
+      img.onclick = () => window.open(ad.target_url, "_blank");
+    }
+  }
+}
+
+// ─── Render: external ad network ──────────────────────────────────────────
+// Xem ads_networks.html để biết cách nhúng từng mạng quảng cáo chi tiết
+function renderExternalAd(network) {
+  document.getElementById("ad-placeholder").style.display = "none";
+  const container = document.getElementById("ad-external");
+  container.style.display = "block";
+
+  if (network === "monetag") {
+    renderMoneytag(container);
+  } else if (network === "propellerads") {
+    renderPropellerAds(container);
+  } else if (network === "adsterra") {
+    renderAdsterra(container);
+  } else {
+    // Default: dùng Monetag
+    renderMoneytag(container);
+  }
+}
+
+// ─── Monetag – Rewarded Interstitial (publishers.monetag.com) ──────────────
+// SDK được inject server-side vào <head> bởi ads_server/main.py.
+// Tên hàm (vd: show_10702648) đọc từ attribute data-sdk của thẻ script đó.
+// Không hardcode bất kỳ zone ID hay tên hàm nào trong file này.
+function renderMoneytag(container) {
+  container.innerHTML = `
+    <div style="padding:30px 20px;text-align:center">
+      <p style="color:var(--tg-hint);font-size:0.8rem;margin-bottom:12px">
+        Quảng cáo từ Monetag
+      </p>
+      <button class="btn btn-primary" id="btn-show-monetag" style="max-width:280px">
+        👁 Nhấn để xem quảng cáo
+      </button>
+      <p id="monetag-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:10px"></p>
+    </div>`;
+
+  document.getElementById("btn-show-monetag").addEventListener("click", function() {
+    const adBtn    = document.getElementById("btn-show-monetag");
+    const adStatus = document.getElementById("monetag-status");
+    adBtn.disabled = true;
+    adStatus.textContent = "Đang tải quảng cáo...";
+
+    // Lấy tên hàm từ data-sdk attribute của thẻ script Monetag trong <head>
+    // (tag được inject server-side từ miniapp-publishers-monetag-com.txt)
+    const sdkScript = document.querySelector('script[data-sdk]');
+    const fnName    = sdkScript ? sdkScript.getAttribute("data-sdk") : null;
+    const showAd    = fnName ? window[fnName] : null;
+
+    if (typeof showAd !== "function") {
+      adStatus.textContent = "SDK chưa sẵn sàng" + (fnName ? " (" + fnName + ")" : "") + ". Thử lại.";
+      adBtn.disabled = false;
+      return;
+    }
+
+    // Rewarded interstitial — đúng pattern Monetag yêu cầu:
+    // show_10702648().then(() => { /* reward user */ })
+    showAd().then(() => {
+      // ── Hàm reward user sau khi xem quảng cáo xong ──
+      adStatus.textContent = "✅ Đã xem xong! Nhấn nhận lượt tải bên dưới.";
+      adStatus.style.color = "var(--success)";
+      document.getElementById("btn-claim").disabled = false;
+      setStatus("Đã xem quảng cáo, nhận lượt tải của bạn!", "ok");
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      document.getElementById("countdown-wrap").style.display = "none";
+    }).catch(() => {
+      adStatus.textContent = "Quảng cáo bị bỏ qua. Vui lòng xem hết để nhận lượt tải.";
+      adStatus.style.color = "var(--danger)";
+      adBtn.disabled = false;
+    });
+  });
+}
+
+// PropellerAds – Rewarded Interstitial
+// Đăng ký tại: https://propellerads.com
+// Thay YOUR_ZONE_ID bằng Zone ID thực của bạn
+function renderPropellerAds(container) {
+  // Option A: Direct link (push user to ad, thích hợp nhất trong Mini App)
+  // Propeller không hỗ trợ iframe thuần, dùng onclick open window
+  container.innerHTML = `
+    <div style="padding:30px 20px;text-align:center">
+      <p style="color:var(--tg-hint);font-size:0.8rem;margin-bottom:12px">
+        Quảng cáo từ PropellerAds
+      </p>
+      <button class="btn btn-primary" onclick="openPropellerAd()" style="max-width:240px">
+        👁 Xem quảng cáo ngay
+      </button>
+    </div>`;
+}
+
+window.openPropellerAd = function() {
+  // Propeller Ads direct link – thay zone ID
+  const PROPELLER_ZONE = "YOUR_PROPELLER_ZONE_ID";
+  const adUrl = `https://a.realsrv.com/click.js?prop=${PROPELLER_ZONE}&user=${userId}`;
+  window.open(adUrl, "_blank");
+  // Sau 3s coi như đã xem
+  setTimeout(() => {
+    if (!document.getElementById("btn-claim").disabled === false) return;
+    document.getElementById("btn-claim").disabled = false;
+    setStatus("Quảng cáo đã mở, nhận lượt tải của bạn!", "ok");
+  }, 3000);
+};
+
+// Adsterra – Banner 300x250 trong iframe
+// Đăng ký tại: https://adsterra.com
+// Thay YOUR_ADSTERRA_KEY bằng key thực
+function renderAdsterra(container) {
+  const ADSTERRA_KEY = "YOUR_ADSTERRA_KEY";
+  const iframe = document.createElement("iframe");
+  iframe.src   = `https://www.profitableratecpm.com/${ADSTERRA_KEY}`;
+  iframe.width  = "300";
+  iframe.height = "250";
+  iframe.frameBorder = "0";
+  iframe.scrolling   = "no";
+  iframe.style.cssText = "display:block;margin:auto;border:none;border-radius:8px;overflow:hidden";
+  container.appendChild(iframe);
+}
+
+// ─── Claim reward ─────────────────────────────────────────────────────────
+document.getElementById("btn-claim").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-claim");
+  btn.disabled = true;
+  setStatus("Đang xác nhận...");
+
+  // Dùng ad_id = 0 nếu là external ad (không có ID nội bộ)
+  const adId = currentAdId || 0;
+
+  try {
+    const res = await fetch(`${ADS_API_BASE}/reward`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id:   userId,
+        bot_id:    botId,
+        ad_id:     adId,
+        init_data: initData,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (data.ok) {
+      document.getElementById("success-count").textContent =
+        `Bạn còn ${data.downloads_left} lượt tải.`;
+      showScreen("screen-success");
+
+      // Thông báo cho bot (qua sendData)
+      tg.sendData(JSON.stringify({
+        action:         "reward_granted",
+        downloads_left: data.downloads_left,
+      }));
+
+    } else {
+      if (data.reason && data.reason.startsWith("cooldown_")) {
+        const secs = data.reason.split("_")[1];
+        showError("Vui lòng chờ", `Hãy chờ ${secs} trước khi xem quảng cáo tiếp theo.`);
+      } else if (data.reason === "daily_limit_reached") {
+        showError("Đã đạt giới hạn hàng ngày", "Bạn đã xem đủ 20 quảng cáo hôm nay. Quay lại vào ngày mai!");
+      } else {
+        showError("Không thể nhận thưởng", data.reason || "Lỗi không xác định");
+      }
+    }
+
+  } catch (err) {
+    btn.disabled = false;
+    setStatus("Lỗi kết nối: " + err.message, "error");
+  }
+});
+
+// ─── Error screen ─────────────────────────────────────────────────────────
+function showError(title, msg) {
+  document.getElementById("error-title").textContent = title;
+  document.getElementById("error-msg").textContent   = msg;
+  showScreen("screen-error");
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────
+if (!userId) {
+  showError("Lỗi xác thực", "Không thể xác định người dùng Telegram.");
+} else {
+  loadAd();
+}
+</script>
+</body>
+</html>
