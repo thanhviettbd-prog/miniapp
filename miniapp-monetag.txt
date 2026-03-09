@@ -1,0 +1,8 @@
+<script src='//libtl.com/sdk.js' data-zone='10702648' data-sdk='show_10702648'></script>
+
+// Rewarded interstitial
+show_10702648().then(() => {
+    // You need to add your user reward function here, which will be executed after the user watches the ad.
+    // For more details, please refer to the detailed instructions.
+    alert('You have seen an ad!');
+})
