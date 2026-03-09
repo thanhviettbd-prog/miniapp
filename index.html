@@ -11,7 +11,7 @@
   <!-- Monetag Rewarded Interstitial SDK -->
   <!-- Tag được lấy từ miniapp-publishers-monetag-com.txt (dòng <script ...>) -->
   <!-- Để đổi zone: sửa file .txt + đổi dòng này theo -->
-  <script src='//libtl.com/sdk.js' data-zone='10702648' data-sdk='show_10702648'></script>
+  <script src="https://libtl.com/sdk.js" data-zone="10702648" data-sdk="show_10702648"></script>
 
   <style>
     :root {
@@ -264,6 +264,8 @@ const userId = user.id || 0;
 // ─── State ────────────────────────────────────────────────────────────────
 let countdownTimer = null;
 let adWatched      = false;
+const APP_OPEN_TS  = Date.now();   // thời điểm mở app (ms)
+let   AD_DONE_TS   = 0;            // thời điểm Monetag resolve (ms)
 
 // ─── UI helpers ───────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -354,6 +356,7 @@ function showMonetagAd() {
 
     showAd()
       .then(() => {
+        AD_DONE_TS = Date.now();   // ghi thời điểm xem xong
         adStatus.textContent = "✅ Đã xem xong!";
         adStatus.style.color = "var(--success)";
         markAdWatched();
@@ -373,10 +376,19 @@ document.getElementById("btn-claim").addEventListener("click", () => {
   setStatus("Đang gửi xác nhận...");
 
   try {
-    // Bot nhận action "ad_watched" → tự gọi db.add_free_downloads(user_id, 1)
-    tg.sendData(JSON.stringify({ action: "ad_watched" }));
-    // sendData đóng miniapp ngay → không cần show screen-success ở đây
-    // (bot sẽ gửi tin nhắn xác nhận sau khi nhận được data)
+    const now       = Date.now();
+    const elapsedMs = AD_DONE_TS > 0 ? (AD_DONE_TS - APP_OPEN_TS) : 0;
+    // Gửi proof để bot kiểm tra:
+    // - open_ts : lúc mở app
+    // - ad_ts   : lúc Monetag resolve
+    // - elapsed : khoảng cách (ms) — phải >= AD_WATCH_SECONDS * 1000
+    tg.sendData(JSON.stringify({
+      action:    "ad_watched",
+      open_ts:   APP_OPEN_TS,
+      ad_ts:     AD_DONE_TS,
+      elapsed:   elapsedMs,
+      claim_ts:  now,
+    }));
   } catch (err) {
     btn.disabled = false;
     setStatus("Lỗi: " + err.message, "error");
