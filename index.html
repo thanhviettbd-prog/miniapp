@@ -13,6 +13,9 @@
   <!-- Để đổi zone: sửa file .txt + đổi dòng này theo -->
   <script src="https://libtl.com/sdk.js" data-zone="10702648" data-sdk="show_10702648"></script>
 
+  <!-- Adsgram Rewarded SDK -->
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+
   <style>
     :root {
       --tg-bg:     var(--tg-theme-bg-color,       #1a1a2e);
@@ -252,6 +255,7 @@
 // ─── Config ───────────────────────────────────────────────────────────────
 const _urlParams       = new URLSearchParams(window.location.search);
 const AD_WATCH_SECONDS = 10;   // giây đếm ngược tối thiểu
+const AD_MODE          = _urlParams.get('mode') || 'monetag';  // 'monetag' hoặc 'adsgram'
 
 // ─── Telegram WebApp init ─────────────────────────────────────────────────
 const tg     = window.Telegram.WebApp;
@@ -332,9 +336,15 @@ function showMonetagAd() {
         Xem quảng cáo để nhận lượt tải miễn phí
       </p>
       <button class="btn btn-primary" id="btn-show-monetag" style="max-width:280px">
-        👁 Nhấn để xem quảng cáo
+        👁 Xem quảng cáo (Mạng 1)
       </button>
       <p id="monetag-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:10px"></p>
+      <div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.1);padding-top:10px">
+        <button class="btn btn-outline" id="btn-show-adsgram" style="max-width:280px">
+          🎬 Xem quảng cáo (Mạng 2)
+        </button>
+        <p id="adsgram-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:6px"></p>
+      </div>
     </div>`;
 
   document.getElementById("btn-show-monetag").addEventListener("click", function () {
@@ -357,6 +367,7 @@ function showMonetagAd() {
     showAd()
       .then(() => {
         AD_DONE_TS = Date.now();   // ghi thời điểm xem xong
+        window._adSource = "monetag";
         adStatus.textContent = "✅ Đã xem xong!";
         adStatus.style.color = "var(--success)";
         markAdWatched();
@@ -368,6 +379,73 @@ function showMonetagAd() {
       });
   });
 }
+
+// ─── Adsgram Rewarded Ad ─────────────────────────────────────────────────
+let AdsgramController = null;
+try {
+  if (window.Adsgram) {
+    AdsgramController = window.Adsgram.init({ blockId: "24779" });
+  }
+} catch (e) { /* SDK chưa load */ }
+
+function _handleAdsgramClick() {
+  const btn    = document.getElementById("btn-show-adsgram");
+  const status = document.getElementById("adsgram-status");
+  if (!btn) return;
+
+  if (!AdsgramController) {
+    try { AdsgramController = window.Adsgram.init({ blockId: "24779" }); }
+    catch (e) {
+      if (status) status.textContent = "SDK chưa sẵn sàng. Vui lòng thử lại.";
+      return;
+    }
+  }
+
+  btn.disabled = true;
+  if (status) status.textContent = "Đang tải quảng cáo...";
+
+  AdsgramController.show()
+    .then((result) => {
+      if (result.done) {
+        AD_DONE_TS = Date.now();
+        window._adSource = "adsgram";
+        if (status) { status.textContent = "✅ Đã xem xong!"; status.style.color = "var(--success)"; }
+        markAdWatched();
+      } else {
+        if (status) { status.textContent = "Quảng cáo chưa xem hết. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      if (status) { status.textContent = "Quảng cáo bị bỏ qua hoặc có lỗi. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
+      btn.disabled = false;
+    });
+}
+
+// ─── Adsgram-only UI (dùng khi ?mode=adsgram) ────────────────────────────
+function showAdsgramAdUI() {
+  const container = document.getElementById("ad-external");
+  document.getElementById("ad-placeholder").style.display = "none";
+  container.style.display = "block";
+  container.innerHTML = `
+    <div style="padding:30px 20px;text-align:center">
+      <p style="color:var(--tg-hint);font-size:0.8rem;margin-bottom:12px">
+        Xem quảng cáo để nhận +1 lượt tải bonus
+      </p>
+      <button class="btn btn-primary" id="btn-show-adsgram" style="max-width:280px">
+        🎁 Nhấn để xem quảng cáo bonus
+      </button>
+      <p id="adsgram-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:10px"></p>
+    </div>`;
+  document.getElementById("btn-show-adsgram").addEventListener("click", _handleAdsgramClick);
+}
+
+// Event listener cho nút Adsgram trong chế độ song song Monetag (btn được tạo runtime)
+document.addEventListener("click", function(e) {
+  if (e.target && e.target.id === "btn-show-adsgram" && AD_MODE !== 'adsgram') {
+    _handleAdsgramClick();
+  }
+});
 
 // ─── Claim reward: gọi sendData → bot tự cộng lượt tải ──────────────────
 document.getElementById("btn-claim").addEventListener("click", () => {
@@ -384,6 +462,7 @@ document.getElementById("btn-claim").addEventListener("click", () => {
     // - elapsed : khoảng cách (ms) — phải >= AD_WATCH_SECONDS * 1000
     tg.sendData(JSON.stringify({
       action:    "ad_watched",
+      source:    window._adSource || "monetag",  // monetag hoặc adsgram
       open_ts:   APP_OPEN_TS,
       ad_ts:     AD_DONE_TS,
       elapsed:   elapsedMs,
@@ -407,7 +486,18 @@ if (!userId) {
   showError("Lỗi xác thực", "Trang này chỉ hoạt động khi mở trong Telegram, không phải trình duyệt.");
 } else {
   showScreen("screen-watch");
-  showMonetagAd();
+  if (AD_MODE === 'adsgram') {
+    // Chế độ Adsgram: tăng lượt bonus (từ menu cài đặt)
+    window._adSource = 'adsgram';
+    document.querySelector('#screen-watch h2').textContent = '🎁 Xem quảng cáo tăng lượt tải';
+    document.querySelector('#screen-watch .subtitle').textContent = 'Xem hết để nhận +1 lượt tải bonus';
+    document.getElementById('btn-claim').textContent = '✅ Nhận +1 lượt tải bonus';
+    showAdsgramAdUI();
+  } else {
+    // Chế độ Monetag mặc định
+    window._adSource = 'monetag';
+    showMonetagAd();
+  }
   startCountdown(AD_WATCH_SECONDS);
 }
 </script>
