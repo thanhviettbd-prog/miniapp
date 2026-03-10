@@ -333,18 +333,12 @@ function showMonetagAd() {
   container.innerHTML = `
     <div style="padding:30px 20px;text-align:center">
       <p style="color:var(--tg-hint);font-size:0.8rem;margin-bottom:12px">
-        Xem quảng cáo để nhận lượt tải miễn phí
+        Xem quảng cáo để được tải link ngay
       </p>
       <button class="btn btn-primary" id="btn-show-monetag" style="max-width:280px">
-        👁 Xem quảng cáo (Mạng 1)
+        👁 Nhấn để xem quảng cáo
       </button>
       <p id="monetag-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:10px"></p>
-      <div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.1);padding-top:10px">
-        <button class="btn btn-outline" id="btn-show-adsgram" style="max-width:280px">
-          🎬 Xem quảng cáo (Mạng 2)
-        </button>
-        <p id="adsgram-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:6px"></p>
-      </div>
     </div>`;
 
   document.getElementById("btn-show-monetag").addEventListener("click", function () {
@@ -494,8 +488,11 @@ if (!userId) {
     document.getElementById('btn-claim').textContent = '✅ Nhận +1 lượt tải bonus';
     showAdsgramAdUI();
   } else {
-    // Chế độ Monetag mặc định
+    // Chế độ Monetag: bypass 1 lần để tải link đang chờ
     window._adSource = 'monetag';
+    document.querySelector('#screen-watch h2').textContent = '🎬 Xem quảng cáo';
+    document.querySelector('#screen-watch .subtitle').textContent = 'Xem xong → gửi lại link để tải ngay';
+    document.getElementById('btn-claim').textContent = '✅ Xác nhận đã xem';
     showMonetagAd();
   }
   startCountdown(AD_WATCH_SECONDS);
