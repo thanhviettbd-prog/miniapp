@@ -364,6 +364,7 @@ function showMonetagAd() {
         window._adSource = "monetag";
         adStatus.textContent = "✅ Đã xem xong!";
         adStatus.style.color = "var(--success)";
+        startCountdown(AD_WATCH_SECONDS);
         markAdWatched();
       })
       .catch(() => {
@@ -404,14 +405,22 @@ function _handleAdsgramClick() {
         AD_DONE_TS = Date.now();
         window._adSource = "adsgram";
         if (status) { status.textContent = "✅ Đã xem xong!"; status.style.color = "var(--success)"; }
+        startCountdown(AD_WATCH_SECONDS);
         markAdWatched();
       } else {
         if (status) { status.textContent = "Quảng cáo chưa xem hết. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
         btn.disabled = false;
       }
     })
-    .catch(() => {
-      if (status) { status.textContent = "Quảng cáo bị bỏ qua hoặc có lỗi. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
+    .catch((e) => {
+      const msg = e ? String(e).toLowerCase() : '';
+      const noAds = msg.includes('no ad') || msg.includes('no fill') || msg.includes('no inventory');
+      if (status) {
+        status.textContent = noAds
+          ? "⚠️ Hiện không có quảng cáo. Vui lòng thử lại sau!"
+          : "Quảng cáo bị bỏ qua hoặc có lỗi. Vui lòng thử lại.";
+        status.style.color = "var(--danger)";
+      }
       btn.disabled = false;
     });
 }
@@ -495,7 +504,6 @@ if (!userId) {
     document.getElementById('btn-claim').textContent = '✅ Xác nhận đã xem';
     showMonetagAd();
   }
-  startCountdown(AD_WATCH_SECONDS);
 }
 </script>
 </body>
