@@ -270,6 +270,8 @@ let countdownTimer = null;
 let adWatched      = false;
 const APP_OPEN_TS  = Date.now();   // thời điểm mở app (ms)
 let   AD_DONE_TS   = 0;            // thời điểm Monetag resolve (ms)
+// Theo dõi mạng quảng cáo đã thử để tránh vòng lặp vô tận
+const _adNetworksTried = new Set();
 
 // ─── UI helpers ───────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -325,103 +327,206 @@ function markAdWatched() {
 }
 
 // ─── Monetag Rewarded Interstitial ────────────────────────────────────────
+// Theo docs chính thức: https://docs.monetag.com/docs/ad-integration/rewarded-interstitial/
+// Pattern chuẩn:
+//   show_XXX({ type: 'preload', ymid }) → preload trước khi bật nút
+//   Khi user click → show_XXX({ ymid }) → .then(reward) / .catch(fallback)
+//   .catch() KHÔNG phân biệt user skip vs. no fill → luôn fallback sang mạng khác
 function showMonetagAd() {
   const container = document.getElementById("ad-external");
   document.getElementById("ad-placeholder").style.display = "none";
   container.style.display = "block";
+
+  // Lấy hàm SDK từ data-sdk attribute của thẻ <script> Monetag trong <head>
+  const sdkScript = document.querySelector("script[data-sdk]");
+  const fnName    = sdkScript ? sdkScript.getAttribute("data-sdk") : null;
+  const showAd    = fnName ? window[fnName] : null;
 
   container.innerHTML = `
     <div style="padding:30px 20px;text-align:center">
       <p style="color:var(--tg-hint);font-size:0.8rem;margin-bottom:12px">
         Xem quảng cáo để được tải link ngay
       </p>
-      <button class="btn btn-primary" id="btn-show-monetag" style="max-width:280px">
-        👁 Nhấn để xem quảng cáo
+      <button class="btn btn-primary" id="btn-show-monetag" style="max-width:280px" disabled>
+        ⏳ Đang tải quảng cáo...
       </button>
       <p id="monetag-status" style="color:var(--tg-hint);font-size:0.78rem;margin-top:10px"></p>
     </div>`;
 
-  document.getElementById("btn-show-monetag").addEventListener("click", function () {
-    const adBtn    = document.getElementById("btn-show-monetag");
-    const adStatus = document.getElementById("monetag-status");
-    adBtn.disabled = true;
-    adStatus.textContent = "Đang tải quảng cáo...";
+  const adBtn    = document.getElementById("btn-show-monetag");
+  const adStatus = document.getElementById("monetag-status");
 
-    // Lấy hàm SDK từ data-sdk attribute của thẻ script Monetag trong <head>
-    const sdkScript = document.querySelector("script[data-sdk]");
-    const fnName    = sdkScript ? sdkScript.getAttribute("data-sdk") : null;
-    const showAd    = fnName ? window[fnName] : null;
+  if (typeof showAd !== "function") {
+    adStatus.textContent = "SDK chưa tải xong. Vui lòng thử lại.";
+    adBtn.textContent = "🔄 Thử lại";
+    adBtn.disabled = false;
+    adBtn.onclick = () => showMonetagAd();
+    return;
+  }
 
-    if (typeof showAd !== "function") {
-      adStatus.textContent = "SDK chưa sẵn sàng. Vui lòng thử lại.";
+  // ── Bước 1: PRELOAD (theo docs, giảm delay khi hiển thị thực) ──────────
+  const ymid = String(userId || 'anon');
+  showAd({ type: 'preload', ymid })
+    .then(() => {
+      // Preload thành công → bật nút cho user click
+      adBtn.textContent = "👁 Nhấn để xem quảng cáo";
       adBtn.disabled = false;
-      return;
-    }
+      adBtn.addEventListener("click", function () {
+        adBtn.disabled = true;
+        adStatus.textContent = "Đang hiển thị quảng cáo...";
 
-    showAd()
-      .then(() => {
-        AD_DONE_TS = Date.now();   // ghi thời điểm xem xong
-        window._adSource = "monetag";
-        adStatus.textContent = "✅ Đã xem xong!";
-        adStatus.style.color = "var(--success)";
-        startCountdown(AD_WATCH_SECONDS);
-        markAdWatched();
-      })
-      .catch(() => {
-        adStatus.textContent = "Quảng cáo bị bỏ qua. Vui lòng xem hết để nhận lượt tải.";
-        adStatus.style.color = "var(--danger)";
-        adBtn.disabled = false;
+        // ── Bước 2: SHOW sau khi đã preload ────────────────────────────
+        showAd({ ymid })
+          .then(() => {
+            // User xem xong → cộng thưởng
+            AD_DONE_TS = Date.now();
+            window._adSource = "monetag";
+            adStatus.textContent = "✅ Đã xem xong!";
+            adStatus.style.color = "var(--success)";
+            startCountdown(AD_WATCH_SECONDS);
+            markAdWatched();
+          })
+          .catch(() => {
+            // .catch() = skip hoặc no fill — docs không phân biệt
+            // → fallback Adsgram nếu chưa thử
+            _adNetworksTried.add('monetag');
+            _fallbackToAdsgram(adStatus, adBtn);
+          });
       });
-  });
+    })
+    .catch(() => {
+      // Preload thất bại (no fill hoặc network) → fallback ngay
+      _adNetworksTried.add('monetag');
+      _fallbackToAdsgram(adStatus, adBtn);
+    });
+}
+
+// ─── Helper: fallback từ Monetag → Adsgram ────────────────────────────────
+function _fallbackToAdsgram(statusEl, btnEl) {
+  if (!_adNetworksTried.has('adsgram') && _initAdsgramController()) {
+    if (statusEl) {
+      statusEl.textContent = "⚠️ Monetag không có quảng cáo. Đang thử mạng dự phòng...";
+      statusEl.style.color = "var(--tg-hint)";
+    }
+    if (btnEl) btnEl.disabled = true;
+    setTimeout(() => {
+      document.getElementById("ad-external").innerHTML = "";
+      showAdsgramAdUI();
+    }, 1200);
+  } else {
+    _showNoAdsAvailable();
+  }
 }
 
 // ─── Adsgram Rewarded Ad ─────────────────────────────────────────────────
+// Docs: https://docs.adsgram.ai/publisher/api-reference
+//
+// show() promise behavior:
+//   .then(result) → user watched till the end   → result.done = true (always in then)
+//   .catch(result) → user skipped OR error       → result.error = true/false
+//     result.error === true  → kỹ thuật / no fill → fallback sang Monetag
+//     result.error === false → user bỏ qua (skip) → cho thử lại, KHÔNG fallback
+//
+// Events: onBannerNotFound (no fill), onSkip, onError, onReward, onStart
 let AdsgramController = null;
-try {
-  if (window.Adsgram) {
+
+function _initAdsgramController() {
+  if (AdsgramController) return AdsgramController;
+  if (!window.Adsgram) return null;
+  try {
     AdsgramController = window.Adsgram.init({ blockId: "24779" });
-  }
-} catch (e) { /* SDK chưa load */ }
+
+    // onBannerNotFound: không có quảng cáo nào để hiển thị (no fill)
+    // Đăng ký handler thay cho default alert của Adsgram (theo docs)
+    AdsgramController.addEventListener('onBannerNotFound', () => {
+      window._adsgramNoFill = true;
+      // Hiển thị thông báo custom thay cho alert mặc định Adsgram
+      const s = document.getElementById("adsgram-status");
+      if (s) { s.textContent = "⚠️ Hiện không có quảng cáo. Đang thử mạng dự phòng..."; s.style.color = "var(--tg-hint)"; }
+    });
+
+    // onNonStopShow: user đang cố xem nhiều ad liên tục (spam)
+    // Đăng ký handler để thay thế default alert Adsgram
+    AdsgramController.addEventListener('onNonStopShow', () => {
+      const s = document.getElementById("adsgram-status");
+      const b = document.getElementById("btn-show-adsgram");
+      if (s) { s.textContent = "⏳ Vui lòng chờ một chút trước khi xem thêm quảng cáo."; s.style.color = "var(--tg-hint)"; }
+      if (b) b.disabled = false;
+    });
+
+    // onTooLongSession: session quá dài, user cần khởi động lại app
+    AdsgramController.addEventListener('onTooLongSession', () => {
+      const s = document.getElementById("adsgram-status");
+      const b = document.getElementById("btn-show-adsgram");
+      if (s) { s.textContent = "⚠️ Phiên làm việc quá dài. Vui lòng khởi động lại bot để xem quảng cáo."; s.style.color = "var(--tg-hint)"; }
+      if (b) b.disabled = false;
+    });
+  } catch (e) { /* SDK chưa load */ }
+  return AdsgramController;
+}
+
+// Thử init ngay khi script load
+try { _initAdsgramController(); } catch(e) {}
 
 function _handleAdsgramClick() {
   const btn    = document.getElementById("btn-show-adsgram");
   const status = document.getElementById("adsgram-status");
   if (!btn) return;
 
-  if (!AdsgramController) {
-    try { AdsgramController = window.Adsgram.init({ blockId: "24779" }); }
-    catch (e) {
-      if (status) status.textContent = "SDK chưa sẵn sàng. Vui lòng thử lại.";
-      return;
-    }
+  const ctrl = _initAdsgramController();
+  if (!ctrl) {
+    if (status) status.textContent = "SDK chưa sẵn sàng. Vui lòng thử lại.";
+    return;
   }
 
   btn.disabled = true;
   if (status) status.textContent = "Đang tải quảng cáo...";
+  window._adsgramNoFill = false;  // reset flag
 
-  AdsgramController.show()
-    .then((result) => {
-      if (result.done) {
-        AD_DONE_TS = Date.now();
-        window._adSource = "adsgram";
-        if (status) { status.textContent = "✅ Đã xem xong!"; status.style.color = "var(--success)"; }
-        startCountdown(AD_WATCH_SECONDS);
-        markAdWatched();
+  ctrl.show()
+    .then(() => {
+      // .then() chỉ resolve khi user xem hết (result.done luôn true ở đây)
+      AD_DONE_TS = Date.now();
+      window._adSource = "adsgram";
+      if (status) { status.textContent = "✅ Đã xem xong!"; status.style.color = "var(--success)"; }
+      startCountdown(AD_WATCH_SECONDS);
+      markAdWatched();
+    })
+    .catch((result) => {
+      // result = { done: false, error: boolean, state, description }
+      // result.error === true  → lỗi kỹ thuật / no fill → fallback
+      // result.error === false → user bỏ qua (skip/close)  → cho retry
+      const isError  = !result || result.error === true || window._adsgramNoFill;
+      const isSkip   = result && result.error === false;
+
+      if (isSkip) {
+        // User chủ động bỏ qua → không fallback, yêu cầu xem hết
+        if (status) {
+          status.textContent = "Bạn đã bỏ qua quảng cáo. Vui lòng xem hết để nhận lượt tải.";
+          status.style.color = "var(--danger)";
+        }
+        btn.disabled = false;
+      } else if (isError) {
+        // Lỗi / no fill → fallback sang Monetag
+        _adNetworksTried.add('adsgram');
+        if (!_adNetworksTried.has('monetag')) {
+          if (status) {
+            status.textContent = "⚠️ Adsgram không có quảng cáo. Đang thử mạng dự phòng...";
+            status.style.color = "var(--tg-hint)";
+          }
+          btn.disabled = true;
+          setTimeout(() => {
+            document.getElementById("ad-external").innerHTML = "";
+            showMonetagAd();
+          }, 1200);
+        } else {
+          _showNoAdsAvailable();
+        }
       } else {
-        if (status) { status.textContent = "Quảng cáo chưa xem hết. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
+        // Không rõ → cho retry
+        if (status) { status.textContent = "Có lỗi xảy ra. Vui lòng thử lại."; status.style.color = "var(--danger)"; }
         btn.disabled = false;
       }
-    })
-    .catch((e) => {
-      const msg = e ? String(e).toLowerCase() : '';
-      const noAds = msg.includes('no ad') || msg.includes('no fill') || msg.includes('no inventory');
-      if (status) {
-        status.textContent = noAds
-          ? "⚠️ Hiện không có quảng cáo. Vui lòng thử lại sau!"
-          : "Quảng cáo bị bỏ qua hoặc có lỗi. Vui lòng thử lại.";
-        status.style.color = "var(--danger)";
-      }
-      btn.disabled = false;
     });
 }
 
@@ -476,6 +581,34 @@ document.getElementById("btn-claim").addEventListener("click", () => {
     setStatus("Lỗi: " + err.message, "error");
   }
 });
+
+// ─── No ads available (cả hai mạng đều hết hàng) ────────────────────────
+function _showNoAdsAvailable() {
+  const container = document.getElementById("ad-external");
+  container.style.display = "block";
+  container.innerHTML = `
+    <div style="padding:30px 20px;text-align:center">
+      <p style="font-size:2rem;margin-bottom:8px">😔</p>
+      <p style="color:var(--tg-hint);font-size:0.9rem;margin-bottom:16px">
+        Hiện tại tất cả mạng quảng cáo đều không có inventory.<br>
+        Vui lòng thử lại sau vài phút.
+      </p>
+      <button class="btn btn-outline" style="max-width:220px" onclick="_retryAllNetworks()">
+        🔄 Thử lại
+      </button>
+    </div>`;
+}
+
+function _retryAllNetworks() {
+  _adNetworksTried.clear();
+  document.getElementById("ad-external").innerHTML = "";
+  // Quay lại mạng ban đầu theo mode
+  if (AD_MODE === 'adsgram') {
+    showAdsgramAdUI();
+  } else {
+    showMonetagAd();
+  }
+}
 
 // ─── Error screen ─────────────────────────────────────────────────────────
 function showError(title, msg) {
